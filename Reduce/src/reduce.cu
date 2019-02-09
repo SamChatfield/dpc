@@ -7,7 +7,7 @@
 #define BLOCK_SIZE 1024
 
 // A helper macro to simplify handling cuda error checking
-#define CUDA_ERROR( err, msg ) { \
+#define CUDA_ERROR(err, msg) { \
 if (err != cudaSuccess) {\
     printf( "%s: %s in %s at line %d\n", msg, cudaGetErrorString( err ), __FILE__, __LINE__);\
     exit( EXIT_FAILURE );\
@@ -26,7 +26,7 @@ __host__ void host_blk_reduce(int numElements, int blockSize, float *A)
 		int segStartIdx = segNum * segSize;
 //		printf("segStartIdx = %d\n", segStartIdx);
 		// Loop over each element in this segment starting at 1 (0 is the accumulator)
-		for (int i = 1; i < segSize - 1; i++)
+		for (int i = 1; i < segSize; i++)
 		{
 			int idx = segStartIdx + i;
 			if (idx > numElements - 1)
@@ -46,14 +46,14 @@ __global__ void single_thread_blk_reduce(int numElements, int blockSize, float *
 {
 	int segSize = blockSize * 2;
 	int numSeg = ceil((float) numElements / (float) segSize);
-	printf("%d segments of size %d for %d elements\n", numSeg, segSize, numElements);
+//	printf("%d segments of size %d for %d elements\n", numSeg, segSize, numElements);
 	// Loop over each segment
 	for (int segNum = 0; segNum < numSeg; segNum++)
 	{
 		int segStartIdx = segNum * segSize;
 //		printf("segStartIdx = %d\n", segStartIdx);
 		// Loop over each element in this segment starting at 1 (0 is the accumulator)
-		for (int i = 1; i < segSize - 1; i++)
+		for (int i = 1; i < segSize; i++)
 		{
 			int idx = segStartIdx + i;
 			if (idx > numElements - 1)
@@ -81,7 +81,7 @@ __global__ void global_blk_reduce(int numElements, float *A)
 	{
 		__syncthreads();
 		// TODO: remove
-//		if (blockIdx.x == 24 && threadIdx.x == 0)
+//		if (blockIdx.x == 0 && threadIdx.x == 0)
 //		{
 //			printf("stride: %d\n", stride);
 //			printf("A[%d] (%f) += A[%d + %d] (%f)\n", i, A[i], i, stride, A[i + stride]);
@@ -90,7 +90,7 @@ __global__ void global_blk_reduce(int numElements, float *A)
 		{
 			A[i] += A[i + stride];
 		}
-//		if (blockIdx.x == 24 && threadIdx.x == 0)
+//		if (blockIdx.x == 0 && threadIdx.x == 0)
 //		{
 //			printf("A[%d] = %f\n", i, A[i]);
 //		}
@@ -160,6 +160,21 @@ __global__ void shared_full_reduce()
 
 }
 
+// Compare two vectors for equality
+void compare_results_blk(float *A, float *B, int numElements, int blockSize)
+{
+	int segSize = blockSize * 2;
+	for (int i = 0; i < numElements; i += segSize)
+	{
+		if (A[i] != B[i])
+		{
+			printf("Compare failed at element %d where A=%0.1f and B=%0.1f\n", i, A[i], B[i]);
+			exit(EXIT_FAILURE);
+		}
+	}
+	printf("Test passed\n");
+}
+
 int main()
 {
 	// Error code to check return values for CUDA calls
@@ -201,37 +216,31 @@ int main()
 		h_A[i] = 1.0f;
 	}
 
-	// Allocate the device vector A
-	float *d_A = NULL;
-	err = cudaMalloc((void**) &d_A, size);
-	CUDA_ERROR(err, "Failed to allocate device vector d_A");
-
-	// Initialise the device vector by copying from the host vector
-	printf("Copy input data from the host memory to the CUDA device\n");
-	err = cudaMemcpy(d_A, h_A, size, cudaMemcpyHostToDevice);
-	CUDA_ERROR(err, "Failed to copy vector A from host to device");
-
 	//
-	// host_blk_reduce
+	// HOST_BLK_REDUCE
 	//
+
+	// Allocate memory on host for host_blk_reduce, and copy values from h_A
+	float *h_A_hbr = (float*) malloc(size);
+	memcpy(h_A_hbr, h_A, size);
 
 	sdkStartTimer(&timer);
-	host_blk_reduce(numElements, blockSize, h_A);
+	host_blk_reduce(numElements, blockSize, h_A_hbr);
 	sdkStopTimer(&timer);
 
 	h_msecs = sdkGetTimerValue(&timer);
-	printf("[host_blk_reduce] Executed Sum Reduce of %d elements on the Host in = %.5fmSecs\n", numElements, h_msecs);
+	printf("[HOST_BLK_REDUCE] Executed sum reduce of %d elements on the host in = %.5fmSecs\n", numElements, h_msecs);
 
 	//
-	// single_thread_blk_reduce
+	// SINGLE_THREAD_BLK_REDUCE
 	//
 
-	// Allocate memory on device for single_thread_blk_reduce, and copy values from d_A
+	// Allocate memory on device for single_thread_blk_reduce, and copy values from h_A
 	float *d_A_stbr = NULL;
 	err = cudaMalloc((void**) &d_A_stbr, size);
 	CUDA_ERROR(err, "Failed to allocate device vector d_A_stbr");
-	err = cudaMemcpy(d_A_stbr, d_A, size, cudaMemcpyDeviceToDevice);
-	CUDA_ERROR(err, "Failed to copy vector d_A to d_A_stbr");
+	err = cudaMemcpy(d_A_stbr, h_A, size, cudaMemcpyHostToDevice);
+	CUDA_ERROR(err, "Failed to copy vector h_A to d_A_stbr");
 
 	cudaEventRecord(start, 0);
 	single_thread_blk_reduce<<<1, 1>>>(numElements, blockSize, d_A_stbr);
@@ -246,21 +255,28 @@ int main()
 
 	err = cudaEventElapsedTime(&d_msecs, start, stop);
 	CUDA_ERROR(err, "Failed to get elapsed time");
-	printf("[single_thread_blk_reduce] Executed Sum Reduce of %d elements on the Device in a SINGLE THREAD in = %.5fmSecs\n", numElements, d_msecs);
+	printf("[SINGLE_THREAD_BLK_REDUCE] Executed sum reduce of %d elements on device in a single thread in = %.5fmSecs\n", numElements, d_msecs);
+
+	// Verify result against result of host_blk_reduce
+	float *h_A_stbr = (float*) malloc(size);
+	err = cudaMemcpy(h_A_stbr, d_A_stbr, size, cudaMemcpyDeviceToHost);
+	CUDA_ERROR(err, "Failed to copy vector d_A_stbr to h_A_stbr");
+	compare_results_blk(h_A_hbr, h_A_stbr, numElements, blockSize);
+	free(h_A_stbr);
 
 	err = cudaFree(d_A_stbr);
 	CUDA_ERROR(err, "Failed to free device vector d_A_stbr");
 
 	//
-	// global_blk_reduce
+	// GLOBAL_BLK_REDUCE
 	//
 
-	// Allocate memory on device for global_blk_reduce, and copy values from d_A
+	// Allocate memory on device for global_blk_reduce, and copy values from h_A
 	float *d_A_gbr = NULL;
 	err = cudaMalloc((void**) &d_A_gbr, size);
 	CUDA_ERROR(err, "Failed to allocate device vector d_A_gbr");
-	err = cudaMemcpy(d_A_gbr, d_A, size, cudaMemcpyDeviceToDevice);
-	CUDA_ERROR(err, "Failed to copy vector d_A to d_A_gbr");
+	err = cudaMemcpy(d_A_gbr, h_A, size, cudaMemcpyHostToDevice);
+	CUDA_ERROR(err, "Failed to copy vector h_A to d_A_gbr");
 
 	cudaEventRecord(start, 0);
 	global_blk_reduce<<<numSegments, blockSize>>>(numElements, d_A_gbr);
@@ -275,22 +291,29 @@ int main()
 
 	err = cudaEventElapsedTime(&d_msecs, start, stop);
 	CUDA_ERROR(err, "Failed to get elapsed time");
-	printf("[global_blk_reduce] Executed Sum Reduce of %d elements on the Device in %d blocks of %d threads in = %.5fmSecs\n",
+	printf("[GLOBAL_BLK_REDUCE] Executed sum reduce of %d elements on device in %d blocks of %d threads in = %.5fmSecs\n",
 			numElements, numSegments, blockSize, d_msecs);
+
+	// Verify result against result of host_blk_reduce
+	float *h_A_gbr = (float*) malloc(size);
+	err = cudaMemcpy(h_A_gbr, d_A_gbr, size, cudaMemcpyDeviceToHost);
+	CUDA_ERROR(err, "Failed to copy vector d_A_gbr to h_A_gbr");
+	compare_results_blk(h_A_hbr, h_A_gbr, numElements, blockSize);
+	free(h_A_gbr);
 
 	err = cudaFree(d_A_gbr);
 	CUDA_ERROR(err, "Failed to free device vector d_A_gbr");
 
 	//
-	// shared_blk_reduce
+	// SHARED_BLK_REDUCE
 	//
 
-	// Allocate memory on device for global_blk_reduce, and copy values from d_A
+	// Allocate memory on device for shared_blk_reduce, and copy values from h_A
 	float *d_A_sbr = NULL;
 	err = cudaMalloc((void**) &d_A_sbr, size);
 	CUDA_ERROR(err, "Failed to allocate device vector d_A_sbr");
-	err = cudaMemcpy(d_A_sbr, d_A, size, cudaMemcpyDeviceToDevice);
-	CUDA_ERROR(err, "Failed to copy vector d_A to d_A_sbr");
+	err = cudaMemcpy(d_A_sbr, h_A, size, cudaMemcpyHostToDevice);
+	CUDA_ERROR(err, "Failed to copy vector h_A to d_A_sbr");
 
 	cudaEventRecord(start, 0);
 	shared_blk_reduce<<<numSegments, blockSize>>>(numElements, d_A_sbr);
@@ -305,19 +328,28 @@ int main()
 
 	err = cudaEventElapsedTime(&d_msecs, start, stop);
 	CUDA_ERROR(err, "Failed to get elapsed time");
-	printf("[shared_blk_reduce] Executed Sum Reduce of %d elements on the Device in %d blocks of %d threads in = %.5fmSecs\n",
+	printf("[SHARED_BLK_REDUCE] Executed sum reduce of %d elements on device in %d blocks of %d threads in = %.5fmSecs\n",
 			numElements, numSegments, blockSize, d_msecs);
+
+	// Verify result against result of host_blk_reduce
+	float *h_A_sbr = (float*) malloc(size);
+	err = cudaMemcpy(h_A_sbr, d_A_sbr, size, cudaMemcpyDeviceToHost);
+	CUDA_ERROR(err, "Failed to copy vector d_A_sbr to h_A_sbr");
+	compare_results_blk(h_A_hbr, h_A_sbr, numElements, blockSize);
+	free(h_A_sbr);
 
 	err = cudaFree(d_A_sbr);
 	CUDA_ERROR(err, "Failed to free device vector d_A_sbr");
 
 	//
-	// Teardown
+	// BLK_REDUCE TEARDOWN
 	//
 
-	// Free device global memory
-	err = cudaFree(d_A);
-	CUDA_ERROR(err, "Failed to free device vector d_A");
+	free(h_A_hbr);
+
+	//
+	// TEARDOWN
+	//
 
 	// Free host memory
 	free(h_A);
