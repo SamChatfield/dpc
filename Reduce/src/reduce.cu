@@ -461,7 +461,7 @@ int main()
 	CUDA_ERROR(err, "Failed to copy vector h_A to d_A_sfr");
 
 	cudaEventRecord(start, 0);
-	global_full_reduce(numElements, numSegments, blockSize, d_A_sfr);
+	shared_full_reduce(numElements, numSegments, blockSize, d_A_sfr);
 	cudaEventRecord(stop, 0);
 	cudaEventSynchronize(stop);
 
