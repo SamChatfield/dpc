@@ -43,15 +43,24 @@ __global__ void d_block_scan(int n, int *in, int *out)
 {
 	__shared__ int temp[BLOCK_SIZE * 2];
 
+	int segSize = blockDim.x * 2;
 	int thid = threadIdx.x;
+	int segStartIdx = segSize * blockIdx.x;
 	int offset = 1;
 
 	// Load input into shared memory
-	temp[2*thid] = in[2*thid];
-	temp[2*thid+1] = in[2*thid+1];
+	if (segStartIdx + 2*thid < n)
+	{
+		temp[2*thid] = in[segStartIdx + 2*thid];
+		temp[2*thid+1] = in[segStartIdx + 2*thid+1];
+	}
+	else{
+		temp[2*thid] = 0;
+		temp[2*thid+1] = 0;
+	}
 
 	// Build sum in place up the tree
-	for (int d = n >> 1; d > 0; d >>= 1)
+	for (int d = segSize >> 1; d > 0; d >>= 1)
 	{
 		__syncthreads();
 
@@ -59,16 +68,17 @@ __global__ void d_block_scan(int n, int *in, int *out)
 		{
 			int ai = offset * (2*thid+1) - 1;
 			int bi = offset * (2*thid+2) - 1;
+
 			temp[bi] += temp[ai];
 		}
 		offset *= 2;
 	}
 
 	// Zero the last element
-	if (thid == 0) { temp[n-1] = 0; };
+	if (thid == 0) { temp[segSize-1] = 0; };
 
 	// Traverse down tree and build scan
-	for (int d = 1; d < n; d *= 2)
+	for (int d = 1; d < segSize; d *= 2)
 	{
 		offset >>= 1;
 		__syncthreads();
@@ -87,8 +97,11 @@ __global__ void d_block_scan(int n, int *in, int *out)
 	__syncthreads();
 
 	// Write results to global memory
-	out[2*thid] = temp[2*thid];
-	out[2*thid+1] = temp[2*thid+1];
+	if (segStartIdx + 2*thid < n)
+	{
+		out[segStartIdx + 2*thid] = temp[2*thid];
+		out[segStartIdx + 2*thid+1] = temp[2*thid+1];
+	}
 }
 
 void h_full_scan(int numElements, int *in, int *out)
@@ -135,7 +148,7 @@ int main()
 	cudaEventCreate(&stop);
 
 	int blockSize = 1024;
-	int numElements = 2048;
+	int numElements = 4096;
 	size_t size = numElements * sizeof(int);
 	int numBlocks = 1 + ((numElements - 1) / blockSize);
 	int numSegments = 1 + ((numElements - 1) / (blockSize * 2));
