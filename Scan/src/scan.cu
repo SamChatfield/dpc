@@ -39,35 +39,6 @@ void h_block_scan(int n, int numBlocks, int blockSize, int *in, int *out)
 	}
 }
 
-// Accidentally implemented the naive block scan, but keeping it in anyway
-__global__ void d_block_scan_naive(int n, int *in, int *out)
-{
-	__shared__ int temp[BLOCK_SIZE * 2];
-
-	int ti = threadIdx.x;
-	int elem = blockDim.x * blockIdx.x + threadIdx.x;
-	int rBuf = BLOCK_SIZE;
-	int wBuf = 0;
-
-	temp[wBuf + ti] = (ti > 0) ? in[elem - 1] : 0;
-	__syncthreads();
-
-	for (int offset = 1; offset < BLOCK_SIZE; offset *= 2)
-	{
-		wBuf = BLOCK_SIZE - wBuf;
-		rBuf = BLOCK_SIZE - rBuf;
-
-		if (ti >= offset)
-			temp[wBuf + ti] = temp[rBuf + ti] + temp[rBuf + ti - offset];
-		else
-			temp[wBuf + ti] = temp[rBuf + ti];
-
-		__syncthreads();
-	}
-
-	out[elem] = temp[wBuf + ti];
-}
-
 __global__ void d_block_scan(int n, int *in, int *out)
 {
 	__shared__ int temp[BLOCK_SIZE * 2];
@@ -223,40 +194,6 @@ int main()
 
 	h_msecs = sdkGetTimerValue(&timer);
 	printf("[H_BLOCK_SCAN] for %d elements in %.5fmSecs\n", numElements, h_msecs);
-
-//	//
-//	// D_BLOCK_SCAN_NAIVE (listing 1)
-//	// Accidentally implemented this but keeping it in anyway
-//	//
-//
-//	int *d_B = NULL;
-//	err = cudaMalloc((void**) &d_B, size);
-//	CUDA_ERROR(err, "Failed to allocate device vector d_B");
-//
-//	cudaEventRecord(start, 0);
-//	d_block_scan_naive<<<numBlocks, blockSize>>>(numElements, d_A, d_B);
-//	cudaEventRecord(stop, 0);
-//	cudaEventSynchronize(stop);
-//	cudaDeviceSynchronize();
-//	err = cudaGetLastError();
-//	CUDA_ERROR(err, "Failed to launch d_block_scan_naive kernel");
-//
-//	err = cudaEventElapsedTime(&d_msecs, start, stop);
-//	CUDA_ERROR(err, "Failed to get elapsed time");
-//	printf("[D_BLOCK_SCAN_NAIVE] Executed naive block scan in %d blocks of %d threads in = %.5fmSecs\n", numBlocks, blockSize, d_msecs);
-//
-//	// Verify result against result of h_block_scan
-//	int *h_B_dbsn = (int*) malloc(size);
-//	err = cudaMemcpy(h_B_dbsn, d_B, size, cudaMemcpyDeviceToHost);
-//	CUDA_ERROR(err, "Failed to copy vector d_B to h_B_dbsn");
-//	if (correct_results_full(numElements, h_B_dbsn, h_B_hbs))
-//		printf("Test passed\n");
-//	else
-//		exit(EXIT_FAILURE);
-//	free(h_B_dbsn);
-//
-//	err = cudaFree(d_B);
-//	CUDA_ERROR(err, "Failed to free device vector d_B");
 
 	//
 	// D_BLOCK_SCAN (listing 2)
