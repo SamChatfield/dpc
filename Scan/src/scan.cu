@@ -167,9 +167,10 @@ void two_level_scan(int n, int numSegments, int segSize, int *in, int *out)
 	int *h_SUMS_dbs = (int*) malloc(sumsSize);
 	err = cudaMemcpy(h_SUMS_dbs, sums, sumsSize, cudaMemcpyDeviceToHost);
 	CUDA_ERROR(err, "Failed to copy vector sums to h_SUMS_dbs");
-	printf("sums[0] = %d\n", h_SUMS_dbs[0]);
-	printf("sums[1] = %d\n", h_SUMS_dbs[1]);
-	printf("sums[last] = %d\n", numSegments-1, h_SUMS_dbs[numSegments-1]);
+	for (int i = 0; i < numSegments; i++)
+	{
+		printf("sums[%d] = %d\n", i, h_SUMS_dbs[i]);
+	}
 	free(h_SUMS_dbs);
 
 	int *incr = NULL;
@@ -184,6 +185,16 @@ void two_level_scan(int n, int numSegments, int segSize, int *in, int *out)
 	cudaDeviceSynchronize();
 	err = cudaGetLastError();
 	CUDA_ERROR(err, "Failed to launch d_block_scan kernel");
+
+	// Debug incr output
+	int *h_INCR_dbs = (int*) malloc(sumsSize);
+	err = cudaMemcpy(h_INCR_dbs, incr, sumsSize, cudaMemcpyDeviceToHost);
+	CUDA_ERROR(err, "Failed to copy vector sums to h_INCR_dbs");
+	for (int i = 0; i < numSegments; i++)
+	{
+		printf("sums[%d] = %d\n", i, h_INCR_dbs[i]);
+	}
+	free(h_INCR_dbs);
 
 	d_uniform_add<<<numSegments, segSize/2>>>(n, out, incr);
 	cudaDeviceSynchronize();
@@ -215,6 +226,7 @@ void d_full_scan(int n, int numSegments, int segSize, int *in, int *out)
 	{
 		// 2 Level Scan
 		printf("[D_FULL_SCAN] Full scan %d elements with segment size %d => 2 level scan\n", n, segSize);
+		two_level_scan(n, numSegments, segSize, in, out);
 	}
 	else if (n > segSize * segSize)
 	{
