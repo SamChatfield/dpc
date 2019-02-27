@@ -192,7 +192,7 @@ void two_level_scan(int n, int numSegments, int segSize, int *in, int *out)
 	CUDA_ERROR(err, "Failed to copy vector sums to h_INCR_dbs");
 	for (int i = 0; i < numSegments; i++)
 	{
-		printf("sums[%d] = %d\n", i, h_INCR_dbs[i]);
+		printf("incr[%d] = %d\n", i, h_INCR_dbs[i]);
 	}
 	free(h_INCR_dbs);
 
@@ -428,7 +428,7 @@ int main()
 	CUDA_ERROR(err, "Failed to get elapsed time");
 	printf("[D_FULL_SCAN] Executed full scan in %d blocks of %d threads in = %.5fmSecs\n", numSegments, blockSize, d_msecs);
 
-	// Verify result against result of h_block_scan
+	// Verify result against result of h_full_scan
 	int *h_B_dfs = (int*) malloc(size);
 	err = cudaMemcpy(h_B_dfs, d_B, size, cudaMemcpyDeviceToHost);
 	CUDA_ERROR(err, "Failed to copy vector d_B to h_B_dfs");
