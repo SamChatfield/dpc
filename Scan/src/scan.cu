@@ -69,16 +69,10 @@ __global__ void d_block_scan(int n, int *in, bool returnSums, int *out, int *sum
 	int offset = 1;
 
 	// Load input into shared memory
-	if (segStartIdx + 2*thid < n)
-	{
-		temp[2*thid] = in[segStartIdx + 2*thid];
-		temp[2*thid+1] = in[segStartIdx + 2*thid+1];
-	}
-	else
-	{
-		temp[2*thid] = 0;
-		temp[2*thid+1] = 0;
-	}
+	if (segStartIdx + 2*thid < n) temp[2*thid] = in[segStartIdx + 2*thid];
+	else temp[2*thid] = 0;
+	if (segStartIdx + 2*thid+1 < n) temp[2*thid+1] = in[segStartIdx + 2*thid+1];
+	else temp[2*thid+1] = 0;
 
 	// Build sum in place up the tree
 	for (int d = segSize >> 1; d > 0; d >>= 1)
@@ -123,16 +117,12 @@ __global__ void d_block_scan(int n, int *in, bool returnSums, int *out, int *sum
 	__syncthreads();
 
 	// Write results to global memory
-	if (segStartIdx + 2*thid < n)
-	{
-		out[segStartIdx + 2*thid] = temp[2*thid];
-		out[segStartIdx + 2*thid+1] = temp[2*thid+1];
-	}
+	if (segStartIdx + 2*thid < n) out[segStartIdx + 2*thid] = temp[2*thid];
+	if (segStartIdx + 2*thid+1 < n) out[segStartIdx + 2*thid+1] = temp[2*thid+1];
 }
 
 __global__ void d_block_scan_bcao(int n, int *in, bool returnSums, int *out, int *sums)
 {
-	// TODO: Verify that +64 is the min amount we can add for it to work
 	__shared__ int temp[BLOCK_SIZE * 2 + 64];
 
 	int segSize = blockDim.x * 2;
@@ -146,29 +136,9 @@ __global__ void d_block_scan_bcao(int n, int *in, bool returnSums, int *out, int
 	int bankOffsetA = CONFLICT_FREE_OFFSET(ai);
 	int bankOffsetB = CONFLICT_FREE_OFFSET(bi);
 
-	/*
 	// Load input into shared memory
-	if (segStartIdx + 2*thid < n)
-	{
-		// TODO: BCAO change
-//		temp[2*thid] = in[segStartIdx + 2*thid];
-//		temp[2*thid+1] = in[segStartIdx + 2*thid+1];
-		temp[ai + bankOffsetA] = in[segStartIdx + ai];
-		temp[bi + bankOffsetB] = in[segStartIdx + bi];
-	}
-	else
-	{
-		// TODO: BCAO change
-//		temp[2*thid] = 0;
-//		temp[2*thid+1] = 0;
-		temp[ai + bankOffsetA] = 0;
-		temp[bi + bankOffsetB] = 0;
-	}
-	*/
-
 	if (segStartIdx + ai < n) temp[ai + bankOffsetA] = in[segStartIdx + ai];
 	else temp[ai + bankOffsetA] = 0;
-
 	if (segStartIdx + bi < n) temp[bi + bankOffsetB] = in[segStartIdx + bi];
 	else temp[bi + bankOffsetB] = 0;
 
@@ -181,7 +151,6 @@ __global__ void d_block_scan_bcao(int n, int *in, bool returnSums, int *out, int
 		{
 			int ai = offset * (2*thid+1) - 1;
 			int bi = offset * (2*thid+2) - 1;
-			// TODO: BCAO addition
 			ai += CONFLICT_FREE_OFFSET(ai);
 			bi += CONFLICT_FREE_OFFSET(bi);
 
@@ -193,12 +162,8 @@ __global__ void d_block_scan_bcao(int n, int *in, bool returnSums, int *out, int
 	// Zero the last element
 	if (thid == 0) {
 		// Move total sum to sums array
-		// TODO: BCAO change
-//		sums[blockIdx.x] = temp[segSize-1];
 		if (returnSums == true) sums[blockIdx.x] = temp[segSize-1 + CONFLICT_FREE_OFFSET(segSize-1)];
 		// Zero the last element
-		// TODO: BCAO change
-//		temp[segSize-1] = 0;
 		temp[segSize-1 + CONFLICT_FREE_OFFSET(segSize-1)] = 0;
 	};
 
@@ -212,7 +177,6 @@ __global__ void d_block_scan_bcao(int n, int *in, bool returnSums, int *out, int
 		{
 			int ai = offset * (2*thid+1) - 1;
 			int bi = offset * (2*thid+2) - 1;
-			// TODO: BCAO addition
 			ai += CONFLICT_FREE_OFFSET(ai);
 			bi += CONFLICT_FREE_OFFSET(bi);
 
@@ -224,18 +188,7 @@ __global__ void d_block_scan_bcao(int n, int *in, bool returnSums, int *out, int
 
 	__syncthreads();
 
-	/*
 	// Write results to global memory
-	if (segStartIdx + 2*thid < n)
-	{
-		// TODO: BCAO change
-//		out[segStartIdx + 2*thid] = temp[2*thid];
-//		out[segStartIdx + 2*thid+1] = temp[2*thid+1];
-		out[segStartIdx + ai] = temp[ai + bankOffsetA];
-		out[segStartIdx + bi] = temp[bi + bankOffsetB];
-	}
-	*/
-
 	if (segStartIdx + ai < n) out[segStartIdx + ai] = temp[ai + bankOffsetA];
 	if (segStartIdx + bi < n) out[segStartIdx + bi] = temp[bi + bankOffsetB];
 }
@@ -251,27 +204,17 @@ void h_full_scan(int numElements, int *in, int *out)
 
 __global__ void d_uniform_add(int n, int *incr, int *out)
 {
-	// TODO: Try storing one value of incr in shared mem
-
 	int segSize = blockDim.x * 2;
 	int thid = threadIdx.x;
 	int segStartIdx = segSize * blockIdx.x;
 
-	if (segStartIdx + 2*thid < n)
-	{
-		out[segStartIdx + 2*thid] += incr[blockIdx.x];
-		out[segStartIdx + 2*thid+1] += incr[blockIdx.x];
-	}
+	if (segStartIdx + 2*thid < n) out[segStartIdx + 2*thid] += incr[blockIdx.x];
+	if (segStartIdx + 2*thid+1 < n) out[segStartIdx + 2*thid+1] += incr[blockIdx.x];
 }
 
 void one_level_scan(int n, int numSegments, int segSize, int *in, bool bcao, int *out)
 {
 	cudaError_t err = cudaSuccess;
-
-//	size_t sumsSize = numSegments * sizeof(int);
-//	int *sums = NULL;
-//	err = cudaMalloc((void**) &sums, sumsSize);
-//	CUDA_ERROR(err, "Failed to allocate device vector sums");
 
 	if (bcao == true)
 		d_block_scan_bcao<<<numSegments, segSize/2>>>(n, in, false, out, NULL);
@@ -280,9 +223,6 @@ void one_level_scan(int n, int numSegments, int segSize, int *in, bool bcao, int
 	cudaDeviceSynchronize();
 	err = cudaGetLastError();
 	CUDA_ERROR(err, "Failed to launch d_block_scan kernel");
-
-//	err = cudaFree(sums);
-//	CUDA_ERROR(err, "Failed to free device vector sums");
 }
 
 void two_level_scan(int n, int numSegments, int segSize, int *in, bool bcao, int *out)
@@ -302,24 +242,9 @@ void two_level_scan(int n, int numSegments, int segSize, int *in, bool bcao, int
 	err = cudaGetLastError();
 	CUDA_ERROR(err, "Failed to launch d_block_scan kernel");
 
-	// Debug sums output
-//	int *h_SUMS_dbs = (int*) malloc(sumsSize);
-//	err = cudaMemcpy(h_SUMS_dbs, sums, sumsSize, cudaMemcpyDeviceToHost);
-//	CUDA_ERROR(err, "Failed to copy vector sums to h_SUMS_dbs");
-//	for (int i = 0; i < numSegments; i++)
-//	{
-//		printf("sums[%d] = %d\n", i, h_SUMS_dbs[i]);
-//	}
-//	free(h_SUMS_dbs);
-
 	int *incr = NULL;
 	err = cudaMalloc((void**) &incr, sumsSize);
 	CUDA_ERROR(err, "Failed to allocate device vector incr");
-
-//	// Unused
-//	int *sums2 = NULL;
-//	err = cudaMalloc((void**) &sums2, sizeof(int));
-//	CUDA_ERROR(err, "Failed to allocate device vector sums2");
 
 	if (bcao == true)
 		d_block_scan_bcao<<<1, segSize/2>>>(numSegments, sums, false, incr, NULL);
@@ -329,16 +254,6 @@ void two_level_scan(int n, int numSegments, int segSize, int *in, bool bcao, int
 	err = cudaGetLastError();
 	CUDA_ERROR(err, "Failed to launch d_block_scan kernel");
 
-	// Debug incr output
-//	int *h_INCR_dbs = (int*) malloc(sumsSize);
-//	err = cudaMemcpy(h_INCR_dbs, incr, sumsSize, cudaMemcpyDeviceToHost);
-//	CUDA_ERROR(err, "Failed to copy vector sums to h_INCR_dbs");
-//	for (int i = 0; i < numSegments; i++)
-//	{
-//		printf("incr[%d] = %d\n", i, h_INCR_dbs[i]);
-//	}
-//	free(h_INCR_dbs);
-
 	d_uniform_add<<<numSegments, segSize/2>>>(n, incr, out);
 	cudaDeviceSynchronize();
 	err = cudaGetLastError();
@@ -346,8 +261,6 @@ void two_level_scan(int n, int numSegments, int segSize, int *in, bool bcao, int
 
 	err = cudaFree(sums);
 	CUDA_ERROR(err, "Failed to free device vector sums");
-//	err = cudaFree(sums2);
-//	CUDA_ERROR(err, "Failed to free device vector sums2");
 	err = cudaFree(incr);
 	CUDA_ERROR(err, "Failed to free device vector incr");
 }
@@ -392,11 +305,6 @@ void three_level_scan(int n, int numSegments, int segSize, int *in, bool bcao, i
 	err = cudaMalloc((void**) &sums2Scanned, sums2Size);
 	CUDA_ERROR(err, "Failed to allocate device vector sums2Scanned");
 
-//	// Unused
-//	int *sums3 = NULL;
-//	err = cudaMalloc((void**) &sums3, sizeof(int));
-//	CUDA_ERROR(err, "Failed to allocate device vector sums3");
-
 	if (bcao == true)
 		d_block_scan_bcao<<<1, segSize/2>>>(sumsNumSegments, sums2, false, sums2Scanned, NULL);
 	else
@@ -419,8 +327,6 @@ void three_level_scan(int n, int numSegments, int segSize, int *in, bool bcao, i
 	CUDA_ERROR(err, "Failed to free device vector sums");
 	err = cudaFree(sums2);
 	CUDA_ERROR(err, "Failed to free device vector sums2");
-//	err = cudaFree(sums3);
-//	CUDA_ERROR(err, "Failed to free device vector sums3");
 	err = cudaFree(sumsScanned);
 	CUDA_ERROR(err, "Failed to free device vector sumsScanned");
 	err = cudaFree(sums2Scanned);
@@ -453,28 +359,7 @@ void full_scan(int n, int numSegments, int segSize, int *in, bool bcao, int *out
 	}
 }
 
-bool correct_results_block(int length, int numSegments, int segSize, int *result, int *sums, int *expected, int *expectedSums)
-{
-	for (int s = 0; s < numSegments; s++)
-	{
-		for (int i = 0; i < segSize; i++)
-		{
-			if (result[i] != expected[i])
-			{
-				printf("TEST FAILED at element %d: %d received, %d expected\n", i, result[i], expected[i]);
-				return false;
-			}
-		}
-		if (sums[s] != expectedSums[s])
-		{
-			printf("TEST FAILED at sum for segment %d: %d received, %d expected\n", s, sums[s], expectedSums[s]);
-			return false;
-		}
-	}
-	return true;
-}
-
-bool correct_results_full(int length, int *result, int *expected)
+bool compare_results(int length, int *result, int *expected)
 {
 	for (int i = 0; i < length; i++)
 	{
@@ -505,13 +390,8 @@ int main()
 
 	int blockSize = 1024;
 	int segSize = blockSize * 2;
-//	int numElements = 2048;
-//	int numElements = 2048 * 2048;
-//	int numElements = 8388608;
 	int numElements = 10000000;
-//	int numElements = 5000;
 	size_t size = numElements * sizeof(int);
-//	int numBlocks = 1 + ((numElements - 1) / blockSize);
 	int numSegments = 1 + ((numElements - 1) / (segSize));
 
 	// Create and initialise host input vector
@@ -521,10 +401,6 @@ int main()
 	for (int i = 0; i < numElements; i++)
 	{
 		h_A[i] = rand() % 10;
-//		if (i % segSize == 0)
-//		{
-//			printf("seg %d start = %d\n", i / segSize, h_A[i]);
-//		}
 	}
 
 	// Copy host input vector to device
@@ -554,7 +430,7 @@ int main()
 	h_msecs = sdkGetTimerValue(&timer);
 	printf("[H_BLOCK_SCAN] for test case in %.5fmSecs\n", h_msecs);
 
-	bool resultCorrectHBS = correct_results_full(hbsTestSize, h_T_hbs, h_T_hbs_exp);
+	bool resultCorrectHBS = compare_results(hbsTestSize, h_T_hbs, h_T_hbs_exp);
 	if (resultCorrectHBS)
 		printf("Test passed\n");
 	else
@@ -582,10 +458,6 @@ int main()
 	err = cudaMalloc((void**) &d_B, size);
 	CUDA_ERROR(err, "Failed to allocate device vector d_B");
 
-//	size_t sumsSize = numSegments * sizeof(int);
-//	int *d_SUMS = NULL;
-//	err = cudaMalloc((void**) &d_SUMS, sumsSize);
-
 	cudaEventRecord(start, 0);
 	d_block_scan<<<numSegments, blockSize>>>(numElements, d_A, false, d_B, NULL);
 	cudaEventRecord(stop, 0);
@@ -598,28 +470,16 @@ int main()
 	CUDA_ERROR(err, "Failed to get elapsed time");
 	printf("[D_BLOCK_SCAN] Executed block scan in %d blocks of %d threads in = %.5fmSecs\n", numSegments, blockSize, d_msecs);
 
-//	// Debug sums output
-//	int *h_SUMS_dbs = (int*) malloc(sumsSize);
-//	err = cudaMemcpy(h_SUMS_dbs, d_SUMS, sumsSize, cudaMemcpyDeviceToHost);
-//	CUDA_ERROR(err, "Failed to copy vector d_SUMS to h_SUMS_dbs");
-//	for (int i = 0; i < numSegments; i++)
-//	{
-//		printf("d_SUMS[%d] = %d\n", i, h_SUMS_dbs[i]);
-//	}
-//	free(h_SUMS_dbs);
-
 	// Verify result against result of h_block_scan
 	int *h_B_dbs = (int*) malloc(size);
 	err = cudaMemcpy(h_B_dbs, d_B, size, cudaMemcpyDeviceToHost);
 	CUDA_ERROR(err, "Failed to copy vector d_B to h_B_dbs");
-	if (correct_results_full(numElements, h_B_dbs, h_B_hbs))
+	if (compare_results(numElements, h_B_dbs, h_B_hbs))
 		printf("Test passed\n");
 	else
 		exit(EXIT_FAILURE);
 	free(h_B_dbs);
 
-//	err = cudaFree(d_SUMS);
-//	CUDA_ERROR(err, "Failed to free device vector d_SUMS");
 	err = cudaFree(d_B);
 	CUDA_ERROR(err, "Failed to free device vector d_B");
 
@@ -629,8 +489,6 @@ int main()
 
 	err = cudaMalloc((void**) &d_B, size);
 	CUDA_ERROR(err, "Failed to allocate device vector d_B");
-
-//	err = cudaMalloc((void**) &d_SUMS, sumsSize);
 
 	cudaEventRecord(start, 0);
 	d_block_scan_bcao<<<numSegments, blockSize>>>(numElements, d_A, false, d_B, NULL);
@@ -648,14 +506,12 @@ int main()
 	int *h_B_dbs_bcao = (int*) malloc(size);
 	err = cudaMemcpy(h_B_dbs_bcao, d_B, size, cudaMemcpyDeviceToHost);
 	CUDA_ERROR(err, "Failed to copy vector d_B to h_B_dbs_bcao");
-	if (correct_results_full(numElements, h_B_dbs_bcao, h_B_hbs))
+	if (compare_results(numElements, h_B_dbs_bcao, h_B_hbs))
 		printf("Test passed\n");
 	else
 		exit(EXIT_FAILURE);
 	free(h_B_dbs_bcao);
 
-//	err = cudaFree(d_SUMS);
-//	CUDA_ERROR(err, "Failed to free device vector d_SUMS");
 	err = cudaFree(d_B);
 	CUDA_ERROR(err, "Failed to free device vector d_B");
 
@@ -678,7 +534,7 @@ int main()
 	h_msecs = sdkGetTimerValue(&timer);
 	printf("[H_FULL_SCAN] for test case in %.5fmSecs\n", h_msecs);
 
-	bool resultCorrectHFS = correct_results_full(hfsTestSize, h_T_hfs, h_T_hfs_exp);
+	bool resultCorrectHFS = compare_results(hfsTestSize, h_T_hfs, h_T_hfs_exp);
 	if (resultCorrectHFS)
 		printf("Test passed\n");
 	else
@@ -718,7 +574,7 @@ int main()
 	int *h_B_dfs = (int*) malloc(size);
 	err = cudaMemcpy(h_B_dfs, d_B, size, cudaMemcpyDeviceToHost);
 	CUDA_ERROR(err, "Failed to copy vector d_B to h_B_dfs");
-	if (correct_results_full(numElements, h_B_dfs, h_B_hfs))
+	if (compare_results(numElements, h_B_dfs, h_B_hfs))
 		printf("Test passed\n");
 	else
 		exit(EXIT_FAILURE);
@@ -747,7 +603,7 @@ int main()
 	int *h_B_dfs_bcao = (int*) malloc(size);
 	err = cudaMemcpy(h_B_dfs_bcao, d_B, size, cudaMemcpyDeviceToHost);
 	CUDA_ERROR(err, "Failed to copy vector d_B to h_B_dfs_bcao");
-	if (correct_results_full(numElements, h_B_dfs_bcao, h_B_hfs))
+	if (compare_results(numElements, h_B_dfs_bcao, h_B_hfs))
 		printf("Test passed\n");
 	else
 		exit(EXIT_FAILURE);
