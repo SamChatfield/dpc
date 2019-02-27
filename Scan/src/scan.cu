@@ -94,7 +94,7 @@ __global__ void d_block_scan(int n, int *in, int *out, int *sums)
 			int ai = offset * (2*thid+1) - 1;
 			int bi = offset * (2*thid+2) - 1;
 
-			float t = temp[ai];
+			int t = temp[ai];
 			temp[ai] = temp[bi];
 			temp[bi] += t;
 		}
@@ -180,11 +180,12 @@ void two_level_scan(int n, int numSegments, int segSize, int *in, int *out)
 	err = cudaMalloc((void**) &incr, sumsSize);
 	CUDA_ERROR(err, "Failed to allocate device vector incr");
 
+	// Unused
 	int *sums2 = NULL;
 	err = cudaMalloc((void**) &sums2, sizeof(int));
-	CUDA_ERROR(err, "Failed to allocate device vector sums");
+	CUDA_ERROR(err, "Failed to allocate device vector sums2");
 
-	d_block_scan<<<1, numSegments/2>>>(n, sums, incr, sums2);
+	d_block_scan<<<1, segSize/2>>>(numSegments, sums, incr, sums2);
 	cudaDeviceSynchronize();
 	err = cudaGetLastError();
 	CUDA_ERROR(err, "Failed to launch d_block_scan kernel");
@@ -226,20 +227,56 @@ void three_level_scan(int n, int numSegments, int segSize, int *in, int *out)
 	err = cudaGetLastError();
 	CUDA_ERROR(err, "Failed to launch d_block_scan kernel");
 
-	int *incr = NULL;
-	err = cudaMalloc((void**) &incr, sumsSize);
-	CUDA_ERROR(err, "Failed to allocate device vector incr");
+	int *sumsScanned = NULL;
+	err = cudaMalloc((void**) &sumsScanned, sumsSize);
+	CUDA_ERROR(err, "Failed to allocate device vector sumsScanned");
 
+	int sumsNumSegments = 1 + ((numSegments - 1) / (segSize));
+
+	size_t sums2Size = sumsNumSegments * sizeof(int);
 	int *sums2 = NULL;
-	err = cudaMalloc((void**) &sums2, sizeof(int));
-	CUDA_ERROR(err, "Failed to allocate device vector sums");
+	err = cudaMalloc((void**) &sums2, sums2Size);
+	CUDA_ERROR(err, "Failed to allocate device vector sums2");
 
-	int numSumSegments = 1 + ((numSegments - 1) / (segSize));
-
-	d_block_scan<<<numSumSegments, segSize/2>>>(n, sums, incr, sums2);
+	d_block_scan<<<sumsNumSegments, segSize/2>>>(numSegments, sums, sumsScanned, sums2);
 	cudaDeviceSynchronize();
 	err = cudaGetLastError();
 	CUDA_ERROR(err, "Failed to launch d_block_scan kernel");
+
+	int *sums2Scanned = NULL;
+	err = cudaMalloc((void**) &sums2Scanned, sums2Size);
+	CUDA_ERROR(err, "Failed to allocate device vector sums2Scanned");
+
+	// Unused
+	int *sums3 = NULL;
+	err = cudaMalloc((void**) &sums3, sizeof(int));
+	CUDA_ERROR(err, "Failed to allocate device vector sums3");
+
+	d_block_scan<<<1, segSize/2>>>(sumsNumSegments, sums2, sums2Scanned, sums3);
+	cudaDeviceSynchronize();
+	err = cudaGetLastError();
+	CUDA_ERROR(err, "Failed to launch d_block_scan kernel");
+
+	d_uniform_add<<<sumsNumSegments, segSize/2>>>(numSegments, sums2Scanned, sumsScanned);
+	cudaDeviceSynchronize();
+	err = cudaGetLastError();
+	CUDA_ERROR(err, "Failed to launch d_uniform_add kernel");
+
+	d_uniform_add<<<numSegments, segSize/2>>>(n, sumsScanned, out);
+	cudaDeviceSynchronize();
+	err = cudaGetLastError();
+	CUDA_ERROR(err, "Failed to launch d_uniform_add kernel");
+
+	err = cudaFree(sums);
+	CUDA_ERROR(err, "Failed to free device vector sums");
+	err = cudaFree(sums2);
+	CUDA_ERROR(err, "Failed to free device vector sums2");
+	err = cudaFree(sums3);
+	CUDA_ERROR(err, "Failed to free device vector sums3");
+	err = cudaFree(sumsScanned);
+	CUDA_ERROR(err, "Failed to free device vector sumsScanned");
+	err = cudaFree(sums2Scanned);
+	CUDA_ERROR(err, "Failed to free device vector sums2Scanned");
 }
 
 void full_scan(int n, int numSegments, int segSize, int *in, int *out)
@@ -321,10 +358,11 @@ int main()
 	int blockSize = 1024;
 	int segSize = blockSize * 2;
 //	int numElements = 1024;
-	int numElements = 1048576;
-//	int numElements = 32768;
+//	int numElements = 2048 * 2048;
+//	int numElements = 8388608;
+	int numElements = 10000000;
 	size_t size = numElements * sizeof(int);
-	int numBlocks = 1 + ((numElements - 1) / blockSize);
+//	int numBlocks = 1 + ((numElements - 1) / blockSize);
 	int numSegments = 1 + ((numElements - 1) / (segSize));
 
 	// Create and initialise host input vector
