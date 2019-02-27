@@ -164,8 +164,8 @@ void two_level_scan(int n, int numSegments, int segSize, int *in, int *out)
 	CUDA_ERROR(err, "Failed to launch d_block_scan kernel");
 
 	// Debug sums output
-	int *h_SUMS_dbs = (int*) malloc(size);
-	err = cudaMemcpy(h_SUMS_dbs, sums, size, cudaMemcpyDeviceToHost);
+	int *h_SUMS_dbs = (int*) malloc(sumsSize);
+	err = cudaMemcpy(h_SUMS_dbs, sums, sumsSize, cudaMemcpyDeviceToHost);
 	CUDA_ERROR(err, "Failed to copy vector sums to h_SUMS_dbs");
 	printf("sums[0] = %d\n", h_SUMS_dbs[0]);
 	printf("sums[1] = %d\n", h_SUMS_dbs[1]);
