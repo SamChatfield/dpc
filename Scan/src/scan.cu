@@ -163,6 +163,15 @@ void two_level_scan(int n, int numSegments, int segSize, int *in, int *out)
 	err = cudaGetLastError();
 	CUDA_ERROR(err, "Failed to launch d_block_scan kernel");
 
+	// Debug sums output
+	int *h_SUMS_dbs = (int*) malloc(size);
+	err = cudaMemcpy(h_SUMS_dbs, sums, size, cudaMemcpyDeviceToHost);
+	CUDA_ERROR(err, "Failed to copy vector sums to h_SUMS_dbs");
+	printf("sums[0] = %d\n", h_SUMS_dbs[0]);
+	printf("sums[1] = %d\n", h_SUMS_dbs[1]);
+	printf("sums[last] = %d\n", numSegments-1, h_SUMS_dbs[numSegments-1]);
+	free(h_SUMS_dbs);
+
 	int *incr = NULL;
 	err = cudaMalloc((void**) &incr, sumsSize);
 	CUDA_ERROR(err, "Failed to allocate device vector incr");
@@ -180,6 +189,13 @@ void two_level_scan(int n, int numSegments, int segSize, int *in, int *out)
 	cudaDeviceSynchronize();
 	err = cudaGetLastError();
 	CUDA_ERROR(err, "Failed to launch d_uniform_add kernel");
+
+	err = cudaFree(sums);
+	CUDA_ERROR(err, "Failed to free device vector sums");
+	err = cudaFree(sums2);
+	CUDA_ERROR(err, "Failed to free device vector sums2");
+	err = cudaFree(incr);
+	CUDA_ERROR(err, "Failed to free device vector incr");
 }
 
 void three_level_scan(int n, int *in, int *out)
@@ -398,7 +414,7 @@ int main()
 
 	err = cudaEventElapsedTime(&d_msecs, start, stop);
 	CUDA_ERROR(err, "Failed to get elapsed time");
-	printf("[D_FULL_SCAN] Executed block scan in %d blocks of %d threads in = %.5fmSecs\n", numSegments, blockSize, d_msecs);
+	printf("[D_FULL_SCAN] Executed full scan in %d blocks of %d threads in = %.5fmSecs\n", numSegments, blockSize, d_msecs);
 
 	// Verify result against result of h_block_scan
 	int *h_B_dfs = (int*) malloc(size);
