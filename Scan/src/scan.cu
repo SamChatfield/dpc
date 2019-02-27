@@ -13,6 +13,15 @@
 #include <helper_functions.h>
 
 #define BLOCK_SIZE 1024
+#define NUM_BANKS 32
+#define LOG_NUM_BANKS 5
+
+#ifdef ZERO_BANK_CONFLICTS
+#define CONFLICT_FREE_OFFSET(n) \
+	((n) >> NUM_BANKS + (n) >> (2 * LOG_NUM_BANKS))
+#else
+#define CONFLICT_FREE_OFFSET(n) ((n) >> LOG_NUM_BANKS)
+#endif
 
 // A helper macro to simplify handling cuda error checking
 #define CUDA_ERROR(err, msg) { \
@@ -108,6 +117,116 @@ __global__ void d_block_scan(int n, int *in, int *out, int *sums)
 		out[segStartIdx + 2*thid] = temp[2*thid];
 		out[segStartIdx + 2*thid+1] = temp[2*thid+1];
 	}
+}
+
+__global__ void d_block_scan_bcao(int n, int *in, int *out, int *sums)
+{
+	// TODO: Verify that +64 is the min amount we can add for it to work
+	__shared__ int temp[BLOCK_SIZE * 2 + 64];
+
+	int segSize = blockDim.x * 2;
+	int thid = threadIdx.x;
+	int segStartIdx = segSize * blockIdx.x;
+	int offset = 1;
+
+	int ai = thid;
+	int bi = thid + blockDim.x;
+
+	int bankOffsetA = CONFLICT_FREE_OFFSET(ai);
+	int bankOffsetB = CONFLICT_FREE_OFFSET(bi);
+
+	/*
+	// Load input into shared memory
+	if (segStartIdx + 2*thid < n)
+	{
+		// TODO: BCAO change
+//		temp[2*thid] = in[segStartIdx + 2*thid];
+//		temp[2*thid+1] = in[segStartIdx + 2*thid+1];
+		temp[ai + bankOffsetA] = in[segStartIdx + ai];
+		temp[bi + bankOffsetB] = in[segStartIdx + bi];
+	}
+	else
+	{
+		// TODO: BCAO change
+//		temp[2*thid] = 0;
+//		temp[2*thid+1] = 0;
+		temp[ai + bankOffsetA] = 0;
+		temp[bi + bankOffsetB] = 0;
+	}
+	*/
+
+	if (segStartIdx + ai < n) temp[ai + bankOffsetA] = in[segStartIdx + ai];
+	else temp[ai + bankOffsetA] = 0;
+
+	if (segStartIdx + bi < n) temp[bi + bankOffsetB] = in[segStartIdx + bi];
+	else temp[bi + bankOffsetB] = 0;
+
+	// Build sum in place up the tree
+	for (int d = segSize >> 1; d > 0; d >>= 1)
+	{
+		__syncthreads();
+
+		if (thid < d)
+		{
+			int ai = offset * (2*thid+1) - 1;
+			int bi = offset * (2*thid+2) - 1;
+			// TODO: BCAO addition
+			ai += CONFLICT_FREE_OFFSET(ai);
+			bi += CONFLICT_FREE_OFFSET(bi);
+
+			temp[bi] += temp[ai];
+		}
+		offset *= 2;
+	}
+
+	// Zero the last element
+	if (thid == 0) {
+		// Move total sum to sums array
+		// TODO: BCAO change
+//		sums[blockIdx.x] = temp[segSize-1];
+		sums[blockIdx.x] = temp[segSize-1 + CONFLICT_FREE_OFFSET(segSize-1)];
+		// Zero the last element
+		// TODO: BCAO change
+//		temp[segSize-1] = 0;
+		temp[segSize-1 + CONFLICT_FREE_OFFSET(segSize-1)] = 0;
+	};
+
+	// Traverse down tree and build scan
+	for (int d = 1; d < segSize; d *= 2)
+	{
+		offset >>= 1;
+		__syncthreads();
+
+		if (thid < d)
+		{
+			int ai = offset * (2*thid+1) - 1;
+			int bi = offset * (2*thid+2) - 1;
+			// TODO: BCAO addition
+			ai += CONFLICT_FREE_OFFSET(ai);
+			bi += CONFLICT_FREE_OFFSET(bi);
+
+			int t = temp[ai];
+			temp[ai] = temp[bi];
+			temp[bi] += t;
+		}
+	}
+
+	__syncthreads();
+
+	/*
+	// Write results to global memory
+	if (segStartIdx + 2*thid < n)
+	{
+		// TODO: BCAO change
+//		out[segStartIdx + 2*thid] = temp[2*thid];
+//		out[segStartIdx + 2*thid+1] = temp[2*thid+1];
+		out[segStartIdx + ai] = temp[ai + bankOffsetA];
+		out[segStartIdx + bi] = temp[bi + bankOffsetB];
+	}
+	*/
+
+	if (segStartIdx + ai < n) out[segStartIdx + ai] = temp[ai + bankOffsetA];
+	if (segStartIdx + bi < n) out[segStartIdx + bi] = temp[bi + bankOffsetB];
 }
 
 void h_full_scan(int numElements, int *in, int *out)
@@ -357,10 +476,11 @@ int main()
 
 	int blockSize = 1024;
 	int segSize = blockSize * 2;
-//	int numElements = 1024;
+//	int numElements = 2048;
 //	int numElements = 2048 * 2048;
 //	int numElements = 8388608;
 	int numElements = 10000000;
+//	int numElements = 5000;
 	size_t size = numElements * sizeof(int);
 //	int numBlocks = 1 + ((numElements - 1) / blockSize);
 	int numSegments = 1 + ((numElements - 1) / (segSize));
@@ -467,6 +587,43 @@ int main()
 	else
 		exit(EXIT_FAILURE);
 	free(h_B_dbs);
+
+	err = cudaFree(d_SUMS);
+	CUDA_ERROR(err, "Failed to free device vector d_SUMS");
+	err = cudaFree(d_B);
+	CUDA_ERROR(err, "Failed to free device vector d_B");
+
+	//
+	// D_BLOCK_SCAN_BCAO
+	//
+
+	err = cudaMalloc((void**) &d_B, size);
+	CUDA_ERROR(err, "Failed to allocate device vector d_B");
+
+//	size_t sumsSize = numSegments * sizeof(int);
+	err = cudaMalloc((void**) &d_SUMS, sumsSize);
+
+	cudaEventRecord(start, 0);
+	d_block_scan_bcao<<<numSegments, blockSize>>>(numElements, d_A, d_B, d_SUMS);
+	cudaEventRecord(stop, 0);
+	cudaEventSynchronize(stop);
+	cudaDeviceSynchronize();
+	err = cudaGetLastError();
+	CUDA_ERROR(err, "Failed to launch d_block_scan kernel");
+
+	err = cudaEventElapsedTime(&d_msecs, start, stop);
+	CUDA_ERROR(err, "Failed to get elapsed time");
+	printf("[D_BLOCK_SCAN_BCAO] Executed block scan in %d blocks of %d threads in = %.5fmSecs\n", numSegments, blockSize, d_msecs);
+
+	// Verify result against result of h_block_scan
+	int *h_B_dbs_bcao = (int*) malloc(size);
+	err = cudaMemcpy(h_B_dbs_bcao, d_B, size, cudaMemcpyDeviceToHost);
+	CUDA_ERROR(err, "Failed to copy vector d_B to h_B_dbs_bcao");
+	if (correct_results_full(numElements, h_B_dbs_bcao, h_B_hbs))
+		printf("Test passed\n");
+	else
+		exit(EXIT_FAILURE);
+	free(h_B_dbs_bcao);
 
 	err = cudaFree(d_SUMS);
 	CUDA_ERROR(err, "Failed to free device vector d_SUMS");
