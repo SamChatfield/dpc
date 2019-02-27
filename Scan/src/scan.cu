@@ -5,10 +5,10 @@
 // Working: block scan, full scan for large vectors (limited by GPU memory), BCAO
 //
 // Test results for 10 million element vector:
-// * Block scan           - 3.21312mSecs
-// * Block scan with BCAO - 2.34595mSecs
-// * Full scan            - 4.80246mSecs
-// * Full scan with BCAO  - 3.98480mSecs
+// * Block scan           - 3.20790mSecs
+// * Block scan with BCAO - 2.45702mSecs
+// * Full scan            - 4.81302mSecs
+// * Full scan with BCAO  - 4.08365mSecs
 //
 // CPU - Intel Core i5-6500
 // GPU - GeForce GTX 960
@@ -59,7 +59,7 @@ void h_block_scan(int n, int numBlocks, int blockSize, int *in, int *out)
 	}
 }
 
-__global__ void d_block_scan(int n, int *in, int *out, int *sums)
+__global__ void d_block_scan(int n, int *in, bool returnSums, int *out, int *sums)
 {
 	__shared__ int temp[BLOCK_SIZE * 2];
 
@@ -98,7 +98,7 @@ __global__ void d_block_scan(int n, int *in, int *out, int *sums)
 	// Zero the last element
 	if (thid == 0) {
 		// Move total sum to sums array
-		sums[blockIdx.x] = temp[segSize-1];
+		if (returnSums == true) sums[blockIdx.x] = temp[segSize-1];
 		// Zero the last element
 		temp[segSize-1] = 0;
 	};
@@ -130,7 +130,7 @@ __global__ void d_block_scan(int n, int *in, int *out, int *sums)
 	}
 }
 
-__global__ void d_block_scan_bcao(int n, int *in, int *out, int *sums)
+__global__ void d_block_scan_bcao(int n, int *in, bool returnSums, int *out, int *sums)
 {
 	// TODO: Verify that +64 is the min amount we can add for it to work
 	__shared__ int temp[BLOCK_SIZE * 2 + 64];
@@ -195,7 +195,7 @@ __global__ void d_block_scan_bcao(int n, int *in, int *out, int *sums)
 		// Move total sum to sums array
 		// TODO: BCAO change
 //		sums[blockIdx.x] = temp[segSize-1];
-		sums[blockIdx.x] = temp[segSize-1 + CONFLICT_FREE_OFFSET(segSize-1)];
+		if (returnSums == true) sums[blockIdx.x] = temp[segSize-1 + CONFLICT_FREE_OFFSET(segSize-1)];
 		// Zero the last element
 		// TODO: BCAO change
 //		temp[segSize-1] = 0;
@@ -268,21 +268,21 @@ void one_level_scan(int n, int numSegments, int segSize, int *in, bool bcao, int
 {
 	cudaError_t err = cudaSuccess;
 
-	size_t sumsSize = numSegments * sizeof(int);
-	int *sums = NULL;
-	err = cudaMalloc((void**) &sums, sumsSize);
-	CUDA_ERROR(err, "Failed to allocate device vector sums");
+//	size_t sumsSize = numSegments * sizeof(int);
+//	int *sums = NULL;
+//	err = cudaMalloc((void**) &sums, sumsSize);
+//	CUDA_ERROR(err, "Failed to allocate device vector sums");
 
 	if (bcao == true)
-		d_block_scan_bcao<<<numSegments, segSize/2>>>(n, in, out, sums);
+		d_block_scan_bcao<<<numSegments, segSize/2>>>(n, in, false, out, NULL);
 	else
-		d_block_scan<<<numSegments, segSize/2>>>(n, in, out, sums);
+		d_block_scan<<<numSegments, segSize/2>>>(n, in, false, out, NULL);
 	cudaDeviceSynchronize();
 	err = cudaGetLastError();
 	CUDA_ERROR(err, "Failed to launch d_block_scan kernel");
 
-	err = cudaFree(sums);
-	CUDA_ERROR(err, "Failed to free device vector sums");
+//	err = cudaFree(sums);
+//	CUDA_ERROR(err, "Failed to free device vector sums");
 }
 
 void two_level_scan(int n, int numSegments, int segSize, int *in, bool bcao, int *out)
@@ -295,9 +295,9 @@ void two_level_scan(int n, int numSegments, int segSize, int *in, bool bcao, int
 	CUDA_ERROR(err, "Failed to allocate device vector sums");
 
 	if (bcao == true)
-		d_block_scan_bcao<<<numSegments, segSize/2>>>(n, in, out, sums);
+		d_block_scan_bcao<<<numSegments, segSize/2>>>(n, in, true, out, sums);
 	else
-		d_block_scan<<<numSegments, segSize/2>>>(n, in, out, sums);
+		d_block_scan<<<numSegments, segSize/2>>>(n, in, true, out, sums);
 	cudaDeviceSynchronize();
 	err = cudaGetLastError();
 	CUDA_ERROR(err, "Failed to launch d_block_scan kernel");
@@ -316,15 +316,15 @@ void two_level_scan(int n, int numSegments, int segSize, int *in, bool bcao, int
 	err = cudaMalloc((void**) &incr, sumsSize);
 	CUDA_ERROR(err, "Failed to allocate device vector incr");
 
-	// Unused
-	int *sums2 = NULL;
-	err = cudaMalloc((void**) &sums2, sizeof(int));
-	CUDA_ERROR(err, "Failed to allocate device vector sums2");
+//	// Unused
+//	int *sums2 = NULL;
+//	err = cudaMalloc((void**) &sums2, sizeof(int));
+//	CUDA_ERROR(err, "Failed to allocate device vector sums2");
 
 	if (bcao == true)
-		d_block_scan_bcao<<<1, segSize/2>>>(numSegments, sums, incr, sums2);
+		d_block_scan_bcao<<<1, segSize/2>>>(numSegments, sums, false, incr, NULL);
 	else
-		d_block_scan<<<1, segSize/2>>>(numSegments, sums, incr, sums2);
+		d_block_scan<<<1, segSize/2>>>(numSegments, sums, false, incr, NULL);
 	cudaDeviceSynchronize();
 	err = cudaGetLastError();
 	CUDA_ERROR(err, "Failed to launch d_block_scan kernel");
@@ -346,8 +346,8 @@ void two_level_scan(int n, int numSegments, int segSize, int *in, bool bcao, int
 
 	err = cudaFree(sums);
 	CUDA_ERROR(err, "Failed to free device vector sums");
-	err = cudaFree(sums2);
-	CUDA_ERROR(err, "Failed to free device vector sums2");
+//	err = cudaFree(sums2);
+//	CUDA_ERROR(err, "Failed to free device vector sums2");
 	err = cudaFree(incr);
 	CUDA_ERROR(err, "Failed to free device vector incr");
 }
@@ -362,9 +362,9 @@ void three_level_scan(int n, int numSegments, int segSize, int *in, bool bcao, i
 	CUDA_ERROR(err, "Failed to allocate device vector sums");
 
 	if (bcao == true)
-		d_block_scan_bcao<<<numSegments, segSize/2>>>(n, in, out, sums);
+		d_block_scan_bcao<<<numSegments, segSize/2>>>(n, in, true, out, sums);
 	else
-		d_block_scan<<<numSegments, segSize/2>>>(n, in, out, sums);
+		d_block_scan<<<numSegments, segSize/2>>>(n, in, true, out, sums);
 	cudaDeviceSynchronize();
 	err = cudaGetLastError();
 	CUDA_ERROR(err, "Failed to launch d_block_scan kernel");
@@ -381,9 +381,9 @@ void three_level_scan(int n, int numSegments, int segSize, int *in, bool bcao, i
 	CUDA_ERROR(err, "Failed to allocate device vector sums2");
 
 	if (bcao == true)
-		d_block_scan_bcao<<<sumsNumSegments, segSize/2>>>(numSegments, sums, sumsScanned, sums2);
+		d_block_scan_bcao<<<sumsNumSegments, segSize/2>>>(numSegments, sums, true, sumsScanned, sums2);
 	else
-		d_block_scan<<<sumsNumSegments, segSize/2>>>(numSegments, sums, sumsScanned, sums2);
+		d_block_scan<<<sumsNumSegments, segSize/2>>>(numSegments, sums, true, sumsScanned, sums2);
 	cudaDeviceSynchronize();
 	err = cudaGetLastError();
 	CUDA_ERROR(err, "Failed to launch d_block_scan kernel");
@@ -392,15 +392,15 @@ void three_level_scan(int n, int numSegments, int segSize, int *in, bool bcao, i
 	err = cudaMalloc((void**) &sums2Scanned, sums2Size);
 	CUDA_ERROR(err, "Failed to allocate device vector sums2Scanned");
 
-	// Unused
-	int *sums3 = NULL;
-	err = cudaMalloc((void**) &sums3, sizeof(int));
-	CUDA_ERROR(err, "Failed to allocate device vector sums3");
+//	// Unused
+//	int *sums3 = NULL;
+//	err = cudaMalloc((void**) &sums3, sizeof(int));
+//	CUDA_ERROR(err, "Failed to allocate device vector sums3");
 
 	if (bcao == true)
-		d_block_scan_bcao<<<1, segSize/2>>>(sumsNumSegments, sums2, sums2Scanned, sums3);
+		d_block_scan_bcao<<<1, segSize/2>>>(sumsNumSegments, sums2, false, sums2Scanned, NULL);
 	else
-		d_block_scan<<<1, segSize/2>>>(sumsNumSegments, sums2, sums2Scanned, sums3);
+		d_block_scan<<<1, segSize/2>>>(sumsNumSegments, sums2, false, sums2Scanned, NULL);
 	cudaDeviceSynchronize();
 	err = cudaGetLastError();
 	CUDA_ERROR(err, "Failed to launch d_block_scan kernel");
@@ -419,8 +419,8 @@ void three_level_scan(int n, int numSegments, int segSize, int *in, bool bcao, i
 	CUDA_ERROR(err, "Failed to free device vector sums");
 	err = cudaFree(sums2);
 	CUDA_ERROR(err, "Failed to free device vector sums2");
-	err = cudaFree(sums3);
-	CUDA_ERROR(err, "Failed to free device vector sums3");
+//	err = cudaFree(sums3);
+//	CUDA_ERROR(err, "Failed to free device vector sums3");
 	err = cudaFree(sumsScanned);
 	CUDA_ERROR(err, "Failed to free device vector sumsScanned");
 	err = cudaFree(sums2Scanned);
@@ -582,12 +582,12 @@ int main()
 	err = cudaMalloc((void**) &d_B, size);
 	CUDA_ERROR(err, "Failed to allocate device vector d_B");
 
-	size_t sumsSize = numSegments * sizeof(int);
-	int *d_SUMS = NULL;
-	err = cudaMalloc((void**) &d_SUMS, sumsSize);
+//	size_t sumsSize = numSegments * sizeof(int);
+//	int *d_SUMS = NULL;
+//	err = cudaMalloc((void**) &d_SUMS, sumsSize);
 
 	cudaEventRecord(start, 0);
-	d_block_scan<<<numSegments, blockSize>>>(numElements, d_A, d_B, d_SUMS);
+	d_block_scan<<<numSegments, blockSize>>>(numElements, d_A, false, d_B, NULL);
 	cudaEventRecord(stop, 0);
 	cudaEventSynchronize(stop);
 	cudaDeviceSynchronize();
@@ -618,8 +618,8 @@ int main()
 		exit(EXIT_FAILURE);
 	free(h_B_dbs);
 
-	err = cudaFree(d_SUMS);
-	CUDA_ERROR(err, "Failed to free device vector d_SUMS");
+//	err = cudaFree(d_SUMS);
+//	CUDA_ERROR(err, "Failed to free device vector d_SUMS");
 	err = cudaFree(d_B);
 	CUDA_ERROR(err, "Failed to free device vector d_B");
 
@@ -630,11 +630,10 @@ int main()
 	err = cudaMalloc((void**) &d_B, size);
 	CUDA_ERROR(err, "Failed to allocate device vector d_B");
 
-//	size_t sumsSize = numSegments * sizeof(int);
-	err = cudaMalloc((void**) &d_SUMS, sumsSize);
+//	err = cudaMalloc((void**) &d_SUMS, sumsSize);
 
 	cudaEventRecord(start, 0);
-	d_block_scan_bcao<<<numSegments, blockSize>>>(numElements, d_A, d_B, d_SUMS);
+	d_block_scan_bcao<<<numSegments, blockSize>>>(numElements, d_A, false, d_B, NULL);
 	cudaEventRecord(stop, 0);
 	cudaEventSynchronize(stop);
 	cudaDeviceSynchronize();
@@ -655,8 +654,8 @@ int main()
 		exit(EXIT_FAILURE);
 	free(h_B_dbs_bcao);
 
-	err = cudaFree(d_SUMS);
-	CUDA_ERROR(err, "Failed to free device vector d_SUMS");
+//	err = cudaFree(d_SUMS);
+//	CUDA_ERROR(err, "Failed to free device vector d_SUMS");
 	err = cudaFree(d_B);
 	CUDA_ERROR(err, "Failed to free device vector d_B");
 
