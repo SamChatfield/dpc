@@ -1,5 +1,5 @@
 -module(tarry).
--export([start/0, node_main/2]).
+-export([start/0]).
 
 %%
 %% MAIN PROCESS
@@ -58,7 +58,7 @@ spawn_nodes(Topology) ->
     [spawn_node(NodeName) || {NodeName, _} <- Topology].
 
 spawn_node(NodeName) ->
-    Pid = spawn(tarry, node_main, [self(), NodeName]),
+    Pid = spawn(tarry_node, main, [self(), NodeName]),
     {NodeName, Pid}.
 
 send_connections([], _) ->
@@ -78,44 +78,4 @@ do_tarry(InitiatorPid) ->
     receive
         {tarry, _, Token} ->
             lists:reverse(Token)
-    end.
-
-%%
-%% NODE PROCESS
-%%
-
-node_main(MainPid, NodeName) ->
-    receive
-        {connections, ConnectedNodes} ->
-            MainPid ! {ack},
-            node_tarry(NodeName, ConnectedNodes)
-    end.
-
-node_tarry(NodeName, ConnectedNodes) ->
-    receive
-        {tarry, Sender, ReceivedToken} ->
-            NewToken = [NodeName|ReceivedToken],
-            SendQueue = lists:keydelete(Sender, 2, ConnectedNodes),
-            case SendQueue of
-                [] ->
-                    Sender ! {tarry, self(), NewToken};
-                [{_, ChildPid}|SendQueueTl] ->
-                    ChildPid ! {tarry, self(), NewToken},
-                    node_tarry_aux(NodeName, Sender, SendQueueTl)
-            end
-    end.
-
-node_tarry_aux(NodeName, Parent, []) ->
-    receive
-        {tarry, _, ReceivedToken} ->
-            NewToken = [NodeName|ReceivedToken],
-            Parent ! {tarry, self(), NewToken}
-    end;
-
-node_tarry_aux(NodeName, Parent, [{_, ChildPid}|SendQueueTl]) ->
-    receive
-        {tarry, _, ReceivedToken} ->
-            NewToken = [NodeName|ReceivedToken],
-            ChildPid ! {tarry, self(), NewToken},
-            node_tarry_aux(NodeName, Parent, SendQueueTl)
     end.
