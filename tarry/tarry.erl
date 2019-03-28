@@ -55,27 +55,39 @@ read_topology(Topology) ->
     end.
 
 spawn_nodes(Topology) ->
+    % Spawn a node for each row in the Topology, returning a list of {NodeName, NodePid} pairs
     [spawn_node(NodeName) || {NodeName, _} <- Topology].
 
 spawn_node(NodeName) ->
+    % Spawn one node from the main function of the tarry_node module
     Pid = spawn(tarry_node, main, [self(), NodeName]),
+    % Return a pair of the node's name given in the input file and the corresponding process ID
     {NodeName, Pid}.
 
 send_connections([], _) ->
+    % Base case, all connections have been sent
     ok;
 
-send_connections([{NodeName, ConnectedNodeNames}|Topology], Nodes) ->
+send_connections([{NodeName, ConnectedNodeNames}|TopologyTl], Nodes) ->
+    % Find the Pid of the current node NodeName from the Nodes list of pairs
     {_, NodePid} = lists:keyfind(NodeName, 1, Nodes),
+    % Find the list of nodes that the current node NodeName is connected to
     ConnectedNodes = [lists:keyfind(N, 1, Nodes) || N <- ConnectedNodeNames],
+    % Send this list of connected nodes to the current node's process at NodePid
     NodePid ! {connections, ConnectedNodes},
+    % Wait for an acknowledgement that the process has received the list before recursing
+    % This makes sure that all processes receive their connected nodes before we continue to the Tarry algorithm
     receive
         {ack} ->
-            send_connections(Topology, Nodes)
+            send_connections(TopologyTl, Nodes)
     end.
 
 do_tarry(InitiatorPid) ->
+    % Send the first tarry message to the initiator to start the algorithm
     InitiatorPid ! {tarry, self(), []},
+    % Wait to receive the final tarry message back from the initiator with the final answer in the Token
     receive
         {tarry, _, Token} ->
+            % Reverse the Token because it was accumulated with cons
             lists:reverse(Token)
     end.
