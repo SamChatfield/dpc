@@ -13,17 +13,19 @@ start() ->
 
     % Spawn the nodes required
     Nodes = spawn_nodes(Topology),
-    io:format("Nodes: ~p~n", [Nodes]),
 
     % Inform the node processes about the others that they are connected to
+    % Uses acks to ensure that all connections are set up before the algorithm begins
     send_connections(Topology, Nodes),
 
-    % Do Tarry
+    % Get the Pid of the Initiator
     {_, InitiatorPid} = lists:keyfind(Initiator, 1, Nodes),
-    Token = do_tarry(InitiatorPid),
-    io:format("MAIN Token: ~p~n", [Token]),
 
-    io:format("~nMAIN DONE~n").
+    % Perform Tarry algorithm
+    Token = do_tarry(InitiatorPid),
+
+    % Print the solution to stdout
+    io:format("Tarry Solution:~n~s~n", [string:join(Token, " ")]).
 
 read_input() ->
     % Read the initiator as the only thing in the first line
@@ -72,11 +74,9 @@ send_connections([{NodeName, ConnectedNodeNames}|Topology], Nodes) ->
     end.
 
 do_tarry(InitiatorPid) ->
-    io:format("Main starting Tarry with initiator: ~p~n", [InitiatorPid]),
     InitiatorPid ! {tarry, self(), []},
     receive
-        {tarry, Sender, Token} ->
-            io:format("Main got Tarry done~n"),
+        {tarry, _, Token} ->
             lists:reverse(Token)
     end.
 
@@ -85,53 +85,37 @@ do_tarry(InitiatorPid) ->
 %%
 
 node_main(MainPid, NodeName) ->
-    io:format("Spawned node ~p (~p) pointing back to main (~p)~n", [NodeName, self(), MainPid]),
-    node_loop(MainPid, NodeName, []).
-
-node_loop(MainPid, NodeName, ConnectedNodes) ->
-    io:format("Node ~p (~p) connected to: ~p~n", [NodeName, self(), ConnectedNodes]),
     receive
-        {connections, NodeConnections} ->
-            io:format("Node ~p (~p) connected to: ~p~n", [NodeName, self(), NodeConnections]),
+        {connections, ConnectedNodes} ->
             MainPid ! {ack},
-            node_tarry_loop(NodeName, NodeConnections, none, none, none),
-            io:format("DONE~n")
+            node_tarry(NodeName, ConnectedNodes)
     end.
 
-node_tarry_loop(NodeName, _, Parent, [], Token) ->
-    io:format("Node ~p with Parent=~p waiting for done~n", [NodeName, Parent]),
+node_tarry(NodeName, ConnectedNodes) ->
     receive
         {tarry, Sender, ReceivedToken} ->
             NewToken = [NodeName|ReceivedToken],
-            io:format("Node ~p (~p) sending Token ~p back to parent ~p~n", [NodeName, self(), NewToken, Parent]),
+            SendQueue = lists:keydelete(Sender, 2, ConnectedNodes),
+            case SendQueue of
+                [] ->
+                    Sender ! {tarry, self(), NewToken};
+                [{_, ChildPid}|SendQueueTl] ->
+                    ChildPid ! {tarry, self(), NewToken},
+                    node_tarry_aux(NodeName, Sender, SendQueueTl)
+            end
+    end.
+
+node_tarry_aux(NodeName, Parent, []) ->
+    receive
+        {tarry, _, ReceivedToken} ->
+            NewToken = [NodeName|ReceivedToken],
             Parent ! {tarry, self(), NewToken}
     end;
 
-node_tarry_loop(NodeName, NodeConnections, Parent, OldQueue, Token) ->
-    io:format("Node ~p with Parent=~p, OldQueue=~p, Token=~p~n", [NodeName, Parent, OldQueue, Token]),
+node_tarry_aux(NodeName, Parent, [{_, ChildPid}|SendQueueTl]) ->
     receive
-        {tarry, Sender, ReceivedToken} when Parent =:= none ->
-            io:format("Node ~p (~p) received Token ~p from ~p for the first time~n", [NodeName, self(), ReceivedToken, Sender]),
+        {tarry, _, ReceivedToken} ->
             NewToken = [NodeName|ReceivedToken],
-            ChildQueue = lists:keydelete(Sender, 2, NodeConnections),
-            case ChildQueue of
-                [] ->
-                    io:format("Node ~p sending NewToken ~p back to sender ~p~n", [NodeName, NewToken, Sender]),
-                    % Sender ! {done, NewToken};
-                    Sender ! {tarry, self(), NewToken};
-                [{ChildName, ChildPid}|NewQueue] ->
-                    io:format("Node ~p sending NewToken ~p to child ~p~n", [NodeName, NewToken, ChildName]),
-                    ChildPid ! {tarry, self(), NewToken},
-                    node_tarry_loop(NodeName, NodeConnections, Sender, NewQueue, NewToken)
-            end;
-        {tarry, Sender, ReceivedToken} ->
-            io:format("Node ~p (~p) received Token ~p from ~p~n", [NodeName, self(), ReceivedToken, Sender]),
-            NewToken = [NodeName|ReceivedToken],
-            [{ChildName, ChildPid}|NewQueue] = OldQueue,
-            io:format("Node ~p sending NewToken ~p to child ~p~n", [NodeName, NewToken, ChildName]),
             ChildPid ! {tarry, self(), NewToken},
-            node_tarry_loop(NodeName, NodeConnections, Parent, NewQueue, NewToken);
-        X ->
-            io:format("REC SOMETHING ELSE: ~p~n", [X])
-    end,
-    io:format("Node ~p (~p) stopped waiting~n", [NodeName, self()]).
+            node_tarry_aux(NodeName, Parent, SendQueueTl)
+    end.
