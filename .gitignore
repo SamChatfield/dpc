@@ -65,3 +65,4 @@ dkms.conf
 Debug/
 Release/
 
+.DS_Store
